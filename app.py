@@ -6,31 +6,47 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 
 st.title("📊 Covered Call Strike Decision Engine")
+st.subheader("Single Stock – Multiple Year Files")
 
-uploaded_file = st.file_uploader("Upload Stock Excel File", type=["xlsx"])
+uploaded_files = st.file_uploader(
+    "Upload Excel Files (Same Stock – Different Years)",
+    type=["xlsx"],
+    accept_multiple_files=True
+)
 
-if uploaded_file is not None:
+if uploaded_files:
 
-    df = pd.read_excel(uploaded_file)
+    dfs = []
 
-    # ===== CLEAN PRICE COLUMNS =====
-    price_cols = [
-        'OPEN', 'HIGH', 'LOW', 'CLOSE',
-        'PREV. CLOSE', 'LTP', 'VWAP',
-        '52W H', '52W L', 'VALUE'
-    ]
+    # ===== LOAD & CLEAN EACH FILE =====
+    for file in uploaded_files:
 
-    for col in price_cols:
-        if col in df.columns:
-            df[col] = (
-                df[col]
-                .astype(str)
-                .str.replace(',', '', regex=False)
-            )
-            df[col] = pd.to_numeric(df[col], errors='coerce')
+        temp_df = pd.read_excel(file)
 
-    df['DATE'] = pd.to_datetime(df['DATE'], dayfirst=True)
+        price_cols = [
+            'OPEN', 'HIGH', 'LOW', 'CLOSE',
+            'PREV. CLOSE', 'LTP', 'VWAP',
+            '52W H', '52W L', 'VALUE'
+        ]
+
+        for col in price_cols:
+            if col in temp_df.columns:
+                temp_df[col] = (
+                    temp_df[col]
+                    .astype(str)
+                    .str.replace(',', '', regex=False)
+                )
+                temp_df[col] = pd.to_numeric(temp_df[col], errors='coerce')
+
+        temp_df['DATE'] = pd.to_datetime(temp_df['DATE'], dayfirst=True)
+        dfs.append(temp_df)
+
+    # ===== STACK VERTICALLY =====
+    df = pd.concat(dfs)
     df = df.sort_values('DATE')
+    df = df.drop_duplicates(subset='DATE')
+
+    st.success(f"{len(uploaded_files)} files combined successfully")
 
     # ===== FEATURE ENGINEERING =====
     df['SMA50'] = df['CLOSE'].rolling(50).mean()
@@ -108,10 +124,9 @@ if uploaded_file is not None:
 
     # ===== DISPLAY RESULTS =====
     st.subheader("📈 Current Market State")
-
     st.write("**Current Regime:**", regime_map[current_regime])
-    st.write("**Upside Breakout Probability (>5%):**", round(breakout_prob, 3))
-    st.write("**Downside Breakdown Probability (<-5%):**", round(downside_prob, 3))
+    st.write("**Upside Breakout Probability (>5%):**", f"{breakout_prob*100:.2f}%")
+    st.write("**Downside Breakdown Probability (<-5%):**", f"{downside_prob*100:.2f}%")
     st.write("**Upside State:**", up_state)
     st.write("**Downside State:**", down_state)
 
@@ -119,32 +134,18 @@ if uploaded_file is not None:
     st.success(decision)
 
     st.subheader("📊 Historical Baselines")
-    st.write("Average Breakout Probability:", round(avg_up, 3))
-    st.write("Average Breakdown Probability:", round(avg_down, 3))
+    st.write("Average Breakout Probability:", f"{avg_up*100:.2f}%")
+    st.write("Average Breakdown Probability:", f"{avg_down*100:.2f}%")
 
-    st.subheader("🔍 Model Diagnostics")
+    # ===== DIAGNOSTICS =====
+    with st.expander("🔍 Model Diagnostics"):
+        st.write("Last Feature Values")
+        st.dataframe(df[features].iloc[-1:])
 
-    # Last Feature Values
-    st.write("### Last Feature Values")
-    st.dataframe(df[features].iloc[-1:])
+        coef_df = pd.DataFrame({
+            "Feature": features,
+            "Breakout Coef": log_model.coef_[0],
+            "Breakdown Coef": down_model.coef_[0]
+        })
 
-    # Model Coefficients
-    st.write("### Logistic Model Coefficients")
-
-    coef_df = pd.DataFrame({
-        "Feature": features,
-        "Breakout Coef": log_model.coef_[0],
-        "Breakdown Coef": down_model.coef_[0]
-    })
-
-    st.dataframe(coef_df)
-
-    # Baseline vs Prediction
-    st.write("### Probability Comparison")
-
-    st.write("Baseline Breakout Probability:", round(df['Breakout'].mean(), 3))
-    st.write("Predicted Breakout Probability:", round(breakout_prob, 3))
-
-    st.write("Baseline Breakdown Probability:", round(df['Breakdown'].mean(), 3))
-    st.write("Predicted Breakdown Probability:", round(downside_prob, 3))
-
+        st.dataframe(coef_df)
